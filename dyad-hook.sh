@@ -152,22 +152,15 @@ SUPERVISOR_SCHEMA='{"type":"object","properties":{"decision":{"type":"string","e
 # Call supervisor with timeout (macOS-compatible)
 SUPERVISOR_RESULT=""
 _timeout_cmd() {
-  if command -v timeout >/dev/null 2>&1; then
-    timeout 30 "$@"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    gtimeout 30 "$@"
-  else
-    # Fallback: background process with kill
-    "$@" &
-    local pid=$!
-    ( sleep 30; kill "$pid" 2>/dev/null ) &
-    local watcher=$!
-    wait "$pid" 2>/dev/null
-    local ret=$?
-    kill "$watcher" 2>/dev/null
-    wait "$watcher" 2>/dev/null
-    return $ret
-  fi
+  "$@" &
+  local pid=$!
+  ( sleep 30; kill "$pid" 2>/dev/null ) &
+  local watcher=$!
+  wait "$pid" 2>/dev/null
+  local ret=$?
+  kill "$watcher" 2>/dev/null
+  wait "$watcher" 2>/dev/null
+  return $ret
 }
 
 if SUPERVISOR_RESULT=$(CLAUDECODE= _timeout_cmd claude -p --model haiku --output-format json --json-schema "$SUPERVISOR_SCHEMA" "$SUPERVISOR_PROMPT" 2>/dev/null); then

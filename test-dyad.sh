@@ -70,7 +70,6 @@ assert_valid_json() {
 # --- Test environment setup ---
 
 TASK_FILE=$(mktemp /tmp/dyad-test-task-XXXXXXXX)
-AUDIT_LOG_BACKUP=""
 
 setup() {
   echo "implement the login page" > "$TASK_FILE"
@@ -82,7 +81,7 @@ setup() {
 
   # Back up and reset audit log
   if [[ -f ~/.dyad/audit.log ]]; then
-    AUDIT_LOG_BACKUP=$(cat ~/.dyad/audit.log)
+    cp ~/.dyad/audit.log ~/.dyad/audit.log.test-backup
   fi
   mkdir -p ~/.dyad
   > ~/.dyad/audit.log
@@ -90,9 +89,8 @@ setup() {
 
 teardown() {
   rm -f "$TASK_FILE"
-  # Restore audit log
-  if [[ -n "$AUDIT_LOG_BACKUP" ]]; then
-    echo "$AUDIT_LOG_BACKUP" > ~/.dyad/audit.log
+  if [[ -f ~/.dyad/audit.log.test-backup ]]; then
+    mv ~/.dyad/audit.log.test-backup ~/.dyad/audit.log
   else
     > ~/.dyad/audit.log
   fi
