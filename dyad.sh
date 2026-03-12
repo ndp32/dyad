@@ -98,7 +98,7 @@ mkdir -p ~/.dyad
 chmod +x "$HOOK_SCRIPT"
 
 # --- Cleanup on exit ---
-cleanup() { rm -rf "$TMPDIR_DYAD"; }
+cleanup() { rm -rf "$TMPDIR_DYAD" "/tmp/dyad-deny-${SESSION_ID}.track"; }
 trap cleanup EXIT INT TERM
 
 # --- Write task context ---

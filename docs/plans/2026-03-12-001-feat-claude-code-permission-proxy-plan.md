@@ -204,7 +204,8 @@ On allow:
 {
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
-    "decision": { "behavior": "allow" }
+    "permissionDecision": "allow",
+    "permissionDecisionReason": "Reason for approval"
   }
 }
 ```
@@ -214,11 +215,19 @@ On deny:
 {
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
-    "decision": {
-      "behavior": "deny",
-      "message": "Denied by dyad: {reason}"
-    },
-    "systemMessage": "⚠️ DYAD DENIED: {tool_name} — {reason}"
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "dyad denied: Reason for denial"
+  }
+}
+```
+
+On deny (circuit breaker — 5+ consecutive denials of the same tool):
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "dyad denied (5x consecutive): Reason for denial"
   }
 }
 ```
