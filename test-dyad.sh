@@ -127,7 +127,7 @@ if [[ "$RUN_FAST" == "true" ]]; then
 echo ""
 echo "=== Layer 0: Fast-path passthrough ==="
 
-for tool in Read Glob Grep Explore TaskCreate TaskUpdate TaskList TaskGet TaskOutput TaskStop; do
+for tool in Read Glob Grep Explore TaskList TaskGet TaskOutput TaskStop; do
   run_hook "{\"tool_name\":\"$tool\",\"tool_input\":{}}"
   assert_passthrough "Fast-path: $tool"
 done
@@ -224,6 +224,56 @@ if [[ -n "$HOOK_OUT" ]]; then
 else
   fail "No-match: falls through to supervisor layer" "expected output from supervisor/default-deny, got passthrough"
 fi
+
+echo ""
+echo "=== Fast-path exclusions ==="
+
+run_hook '{"tool_name":"TaskCreate","tool_input":{"description":"test"}}'
+if [[ -n "$HOOK_OUT" ]]; then
+  pass "TaskCreate: not passthrough (goes through rules/supervisor)"
+else
+  fail "TaskCreate: not passthrough" "expected non-passthrough"
+fi
+
+run_hook '{"tool_name":"TaskUpdate","tool_input":{"id":"123","status":"done"}}'
+if [[ -n "$HOOK_OUT" ]]; then
+  pass "TaskUpdate: not passthrough (goes through rules/supervisor)"
+else
+  fail "TaskUpdate: not passthrough" "expected non-passthrough"
+fi
+
+echo ""
+echo "=== Audit log / .dyad deny rules ==="
+
+run_hook '{"tool_name":"Bash","tool_input":{"command":"cat ~/.dyad/audit.log"}}'
+assert_decision "Deny: audit.log access" "deny"
+
+run_hook '{"tool_name":"Bash","tool_input":{"command":"rm ~/.dyad/audit.log"}}'
+assert_decision "Deny: audit.log deletion" "deny"
+
+run_hook '{"tool_name":"Bash","tool_input":{"command":"ls ~/.dyad"}}'
+assert_decision "Deny: .dyad directory access" "deny"
+
+echo ""
+echo "=== Path traversal prevention ==="
+
+run_hook '{"tool_name":"Edit","tool_input":{"file_path":"/Users/someone/Documents/dyad/../../etc/passwd","old_string":"a","new_string":"b"}}'
+if [[ "$HOOK_DECISION" != "allow" ]]; then
+  pass "Path traversal: Edit with .. not allowed"
+else
+  fail "Path traversal: Edit with .." "should not be allowed"
+fi
+
+run_hook '{"tool_name":"Write","tool_input":{"file_path":"/Users/someone/Documents/dyad/../../../etc/shadow","content":"bad"}}'
+if [[ "$HOOK_DECISION" != "allow" ]]; then
+  pass "Path traversal: Write with .. not allowed"
+else
+  fail "Path traversal: Write with .." "should not be allowed"
+fi
+
+# Normal paths should still be allowed
+run_hook '{"tool_name":"Edit","tool_input":{"file_path":"/Users/someone/Documents/dyad/src/app.js","old_string":"a","new_string":"b"}}'
+assert_decision "Path traversal: normal Edit still allowed" "allow"
 
 echo ""
 echo "=== Edge cases ==="

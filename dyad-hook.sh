@@ -35,7 +35,7 @@ audit_log() {
     --arg source "$source" \
     --arg reason "$reason" \
     '{ts:$ts,session:$session,tool:$tool,input:$input,decision:$decision,source:$source,reason:$reason}' \
-    >> ~/.dyad/audit.log 2>/dev/null
+    >> ~/.dyad/audit.log
 }
 
 output_allow() {
@@ -58,7 +58,7 @@ output_deny() {
 # --- Layer 0: Fast-path for read-only tools ---
 # Exit with no output = passthrough (Claude Code proceeds normally)
 case "$TOOL_NAME" in
-  Read|Glob|Grep|Explore|TaskCreate|TaskUpdate|TaskList|TaskGet|TaskOutput|TaskStop)
+  Read|Glob|Grep|Explore|TaskList|TaskGet|TaskOutput|TaskStop)
     audit_log "allow" "fast-path" "Read-only tool"
     exit 0
     ;;
@@ -96,6 +96,9 @@ RULE_RESULT=$(jq -c --slurpfile rules "${DYAD_RULES_FILE:-/dev/null}" '
         ($actual | length) > 0 and
         # For allow rules on Bash command field: reject if metacharacters present
         (if $rule.action == "allow" and $k == "command" and ($actual | has_shell_meta)
+         then false
+         # For allow rules on file_path: reject path traversal attempts
+         elif $rule.action == "allow" and $k == "file_path" and ($actual | test("\\.\\."))
          then false
          else ($actual | test($pat | glob_to_regex))
          end)
@@ -163,7 +166,16 @@ _timeout_cmd() {
   return $ret
 }
 
-if SUPERVISOR_RESULT=$(CLAUDECODE= _timeout_cmd claude -p --model haiku --output-format json --json-schema "$SUPERVISOR_SCHEMA" "$SUPERVISOR_PROMPT" 2>/dev/null); then
+# Clear inherited environment to prevent recursion and state leakage.
+# CLAUDECODE triggers hook inheritance in Claude Code — clearing it prevents
+# the supervisor's own tool calls from triggering dyad hooks (infinite recursion).
+# We use env -i to also clear any other session-specific state.
+if SUPERVISOR_RESULT=$(_timeout_cmd env -i \
+    PATH="$PATH" \
+    HOME="$HOME" \
+    USER="${USER:-}" \
+    ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+    claude -p --model haiku --output-format json --json-schema "$SUPERVISOR_SCHEMA" "$SUPERVISOR_PROMPT" 2>/dev/null); then
   SUP_DECISION=$(echo "$SUPERVISOR_RESULT" | jq -r '.structured_output.decision // empty')
   SUP_REASON=$(echo "$SUPERVISOR_RESULT" | jq -r '.structured_output.reason // "No reason given"')
 
