@@ -3,20 +3,34 @@
     {
       "tool": "Bash",
       "action": "deny",
+      "match": { "command": "*audit.log*" },
+      "reason": "Audit log manipulation blocked"
+    },
+    {
+      "tool": "Bash",
+      "action": "deny",
+      "match": { "command": "*.dyad*" },
+      "reason": "Dyad config directory manipulation blocked"
+    },
+    {
+      "tool": "Bash",
+      "action": "deny",
       "match": { "command": "rm -rf *" },
       "reason": "Destructive recursive deletion blocked"
     },
     {
       "tool": "Edit",
       "action": "allow",
-      "match": { "file_path": "/Users/*/Documents/dyad/*" },
-      "reason": "Project file edits are safe"
+      "match": { "file_path": "*/Documents/dyad/*" },
+      "reason": "Project file edits are safe",
+      "_note": "Customize this path to match your project directory"
     },
     {
       "tool": "Write",
       "action": "allow",
-      "match": { "file_path": "/Users/*/Documents/dyad/*" },
-      "reason": "Project file writes are safe"
+      "match": { "file_path": "*/Documents/dyad/*" },
+      "reason": "Project file writes are safe",
+      "_note": "Customize this path to match your project directory"
     },
     {
       "tool": "Bash",
