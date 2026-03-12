@@ -7,10 +7,13 @@
 #   Layer 2: AI supervisor via claude -p --model haiku
 #
 # Environment variables (set by dyad.sh):
-#   DYAD_TASK_FILE     — path to file containing the original user task
-#   DYAD_RULES_FILE    — path to the rules JSON config
-#   DYAD_APPROVE_ALL   — "true" to auto-approve everything
-#   DYAD_SESSION_ID    — session identifier for audit logging
+#   DYAD_TASK_FILE        — path to file containing the original user task
+#   DYAD_RULES_FILE       — path to the rules JSON config
+#   DYAD_APPROVE_ALL      — "true" to auto-approve everything
+#   DYAD_SESSION_ID       — session identifier for audit logging
+#   DYAD_PROJECT_ROOT     — absolute path to project root (for relative rule patterns)
+#   DYAD_SESSION_TMPDIR   — session temp directory (for deny tracker)
+#   DYAD_RESOLVED_API_KEY — resolved API key for supervisor calls
 
 # Read hook input from stdin
 INPUT=$(cat)
@@ -20,7 +23,7 @@ SESSION_ID="${DYAD_SESSION_ID:-unknown}"
 TOOL_INPUT=""  # Deferred past fast-path for performance
 
 # --- Consecutive denial tracking ---
-DENY_TRACKER="/tmp/dyad-deny-${SESSION_ID}.track"
+DENY_TRACKER="${DYAD_SESSION_TMPDIR:-/tmp}/dyad-deny-${SESSION_ID}.track"
 
 increment_deny_count() {
   local tool="$1"
@@ -104,9 +107,18 @@ if [[ "${DYAD_APPROVE_ALL:-false}" == "true" ]]; then
 fi
 
 # --- Layer 1: Rule evaluation (single jq call) ---
-RULE_RESULT=$(jq -c --slurpfile rules "${DYAD_RULES_FILE:-/dev/null}" '
+RULE_RESULT=$(jq -c --slurpfile rules "${DYAD_RULES_FILE:-/dev/null}" \
+  --arg project_root "${DYAD_PROJECT_ROOT:-}" '
   # Convert glob patterns to anchored regex: * → .*
   def glob_to_regex: "^" + gsub("\\*"; ".*") + "$";
+
+  # Resolve a file_path pattern: prepend project root if relative.
+  # "Relative" = does not start with "/" or "*/" (the legacy absolute convention).
+  def resolve_pattern:
+    if startswith("/") or startswith("*/") then .
+    elif $project_root != "" then ($project_root + "/" + .)
+    else .
+    end;
 
   # Shell metacharacters that indicate command chaining/injection
   def has_shell_meta: test("[;|&$`()\\n]");
@@ -129,7 +141,8 @@ RULE_RESULT=$(jq -c --slurpfile rules "${DYAD_RULES_FILE:-/dev/null}" '
          # For allow rules on file_path: reject path traversal attempts
          elif $rule.action == "allow" and $k == "file_path" and ($actual | test("\\.\\."))
          then false
-         else ($actual | test($pat | glob_to_regex))
+         # Only resolve file_path patterns against project root; leave command patterns as-is
+         else ($actual | test((if $k == "file_path" then ($pat | resolve_pattern) else $pat end) | glob_to_regex))
          end)
       )) as $matches |
       if $matches then {action: $rule.action, reason: ($rule.reason // "Matched rule")}
@@ -203,7 +216,7 @@ if SUPERVISOR_RESULT=$(_timeout_cmd env -i \
     PATH="$PATH" \
     HOME="$HOME" \
     USER="${USER:-}" \
-    ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+    ANTHROPIC_API_KEY="${DYAD_RESOLVED_API_KEY:-}" \
     claude -p --model haiku --output-format json --json-schema "$SUPERVISOR_SCHEMA" "$SUPERVISOR_PROMPT" 2>/dev/null); then
   SUP_DECISION=$(echo "$SUPERVISOR_RESULT" | jq -r '.structured_output.decision // empty')
   SUP_REASON=$(echo "$SUPERVISOR_RESULT" | jq -r '.structured_output.reason // "No reason given"')

@@ -21,16 +21,14 @@
     {
       "tool": "Edit",
       "action": "allow",
-      "match": { "file_path": "*/Documents/dyad/*" },
-      "reason": "Project file edits are safe",
-      "_note": "Customize this path to match your project directory"
+      "match": { "file_path": "*" },
+      "reason": "Project file edits are safe"
     },
     {
       "tool": "Write",
       "action": "allow",
-      "match": { "file_path": "*/Documents/dyad/*" },
-      "reason": "Project file writes are safe",
-      "_note": "Customize this path to match your project directory"
+      "match": { "file_path": "*" },
+      "reason": "Project file writes are safe"
     },
     {
       "tool": "Bash",

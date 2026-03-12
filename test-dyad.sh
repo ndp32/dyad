@@ -70,6 +70,7 @@ assert_valid_json() {
 # --- Test environment setup ---
 
 TASK_FILE=$(mktemp /tmp/dyad-test-task-XXXXXXXX)
+TEST_TMPDIR=$(mktemp -d /tmp/dyad-test-tmpdir-XXXXXXXX)
 
 setup() {
   echo "implement the login page" > "$TASK_FILE"
@@ -78,6 +79,8 @@ setup() {
   export DYAD_RULES_FILE="$RULES"
   export DYAD_APPROVE_ALL="false"
   export DYAD_SESSION_ID="test-$$"
+  export DYAD_PROJECT_ROOT="$SCRIPT_DIR"
+  export DYAD_SESSION_TMPDIR="$TEST_TMPDIR"
 
   # Back up and reset audit log
   if [[ -f ~/.dyad/audit.log ]]; then
@@ -89,6 +92,7 @@ setup() {
 
 teardown() {
   rm -f "$TASK_FILE"
+  rm -rf "$TEST_TMPDIR"
   if [[ -f ~/.dyad/audit.log.test-backup ]]; then
     mv ~/.dyad/audit.log.test-backup ~/.dyad/audit.log
   else
@@ -176,10 +180,10 @@ assert_decision "Allow: npm install" "allow"
 run_hook '{"tool_name":"Bash","tool_input":{"command":"npm test"}}'
 assert_decision "Allow: npm test (glob match)" "allow"
 
-run_hook '{"tool_name":"Edit","tool_input":{"file_path":"/Users/someone/Documents/dyad/src/app.js","old_string":"a","new_string":"b"}}'
+run_hook "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${SCRIPT_DIR}/src/app.js\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
 assert_decision "Allow: Edit project file" "allow"
 
-run_hook '{"tool_name":"Write","tool_input":{"file_path":"/Users/someone/Documents/dyad/new-file.sh","content":"#!/bin/bash"}}'
+run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${SCRIPT_DIR}/new-file.sh\",\"content\":\"#!/bin/bash\"}}"
 assert_decision "Allow: Write project file" "allow"
 
 echo ""
@@ -257,14 +261,14 @@ assert_decision "Deny: .dyad directory access" "deny"
 echo ""
 echo "=== Path traversal prevention ==="
 
-run_hook '{"tool_name":"Edit","tool_input":{"file_path":"/Users/someone/Documents/dyad/../../etc/passwd","old_string":"a","new_string":"b"}}'
+run_hook "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${SCRIPT_DIR}/../../etc/passwd\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
 if [[ "$HOOK_DECISION" != "allow" ]]; then
   pass "Path traversal: Edit with .. not allowed"
 else
   fail "Path traversal: Edit with .." "should not be allowed"
 fi
 
-run_hook '{"tool_name":"Write","tool_input":{"file_path":"/Users/someone/Documents/dyad/../../../etc/shadow","content":"bad"}}'
+run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${SCRIPT_DIR}/../../../etc/shadow\",\"content\":\"bad\"}}"
 if [[ "$HOOK_DECISION" != "allow" ]]; then
   pass "Path traversal: Write with .. not allowed"
 else
@@ -272,7 +276,7 @@ else
 fi
 
 # Normal paths should still be allowed
-run_hook '{"tool_name":"Edit","tool_input":{"file_path":"/Users/someone/Documents/dyad/src/app.js","old_string":"a","new_string":"b"}}'
+run_hook "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${SCRIPT_DIR}/src/app.js\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
 assert_decision "Path traversal: normal Edit still allowed" "allow"
 
 echo ""
@@ -339,7 +343,7 @@ echo ""
 echo "=== Circuit breaker ==="
 
 # Clean tracker from any prior test runs
-rm -f "/tmp/dyad-deny-${DYAD_SESSION_ID}.track"
+rm -f "${TEST_TMPDIR}/dyad-deny-${DYAD_SESSION_ID}.track"
 
 # 5 consecutive denials of the same tool should escalate
 for i in 1 2 3 4; do
@@ -365,7 +369,7 @@ else
 fi
 
 # Different tool resets counter for previous tool
-rm -f "/tmp/dyad-deny-${DYAD_SESSION_ID}.track"
+rm -f "${TEST_TMPDIR}/dyad-deny-${DYAD_SESSION_ID}.track"
 for i in 1 2 3 4; do
   run_hook '{"tool_name":"WebFetch","tool_input":{"url":"https://example.com"}}'
 done
@@ -386,7 +390,61 @@ else
 fi
 
 # Clean up tracker file
-rm -f "/tmp/dyad-deny-${DYAD_SESSION_ID}.track"
+rm -f "${TEST_TMPDIR}/dyad-deny-${DYAD_SESSION_ID}.track"
+
+echo ""
+echo "=== Cross-platform portability ==="
+
+# DYAD_PROJECT_ROOT resolution: relative rules match files under project root
+run_hook "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${SCRIPT_DIR}/src/components/Button.tsx\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
+assert_decision "Project root: Edit file under DYAD_PROJECT_ROOT" "allow"
+
+# DYAD_PROJECT_ROOT miss: relative rules do NOT match files outside project root
+run_hook '{"tool_name":"Edit","tool_input":{"file_path":"/etc/passwd","old_string":"a","new_string":"b"}}'
+if [[ "$HOOK_DECISION" != "allow" ]]; then
+  pass "Project root: Edit outside DYAD_PROJECT_ROOT not allowed"
+else
+  fail "Project root: Edit outside DYAD_PROJECT_ROOT" "should not be allowed"
+fi
+
+run_hook '{"tool_name":"Write","tool_input":{"file_path":"/tmp/evil.sh","content":"bad"}}'
+if [[ "$HOOK_DECISION" != "allow" ]]; then
+  pass "Project root: Write outside DYAD_PROJECT_ROOT not allowed"
+else
+  fail "Project root: Write outside DYAD_PROJECT_ROOT" "should not be allowed"
+fi
+
+# Legacy absolute patterns: */Documents/dyad/* style should still work
+# We temporarily add a legacy rule to test backward compatibility
+LEGACY_RULES=$(mktemp /tmp/dyad-legacy-rules-XXXXXXXX.json)
+cat > "$LEGACY_RULES" <<'LEGACYEOF'
+{
+  "rules": [
+    {
+      "tool": "Edit",
+      "action": "allow",
+      "match": { "file_path": "*/test-legacy/*" },
+      "reason": "Legacy absolute pattern"
+    }
+  ]
+}
+LEGACYEOF
+SAVED_RULES="$DYAD_RULES_FILE"
+export DYAD_RULES_FILE="$LEGACY_RULES"
+run_hook '{"tool_name":"Edit","tool_input":{"file_path":"/any/path/test-legacy/file.js","old_string":"a","new_string":"b"}}'
+assert_decision "Legacy: */test-legacy/* pattern still works" "allow"
+export DYAD_RULES_FILE="$SAVED_RULES"
+rm -f "$LEGACY_RULES"
+
+# Deny tracker in session dir: verify tracker is created in DYAD_SESSION_TMPDIR
+rm -f "${TEST_TMPDIR}/dyad-deny-${DYAD_SESSION_ID}.track"
+run_hook '{"tool_name":"WebFetch","tool_input":{"url":"https://example.com"}}'
+if [[ -f "${TEST_TMPDIR}/dyad-deny-${DYAD_SESSION_ID}.track" ]]; then
+  pass "Deny tracker: created in DYAD_SESSION_TMPDIR"
+else
+  fail "Deny tracker: created in DYAD_SESSION_TMPDIR" "tracker not found in ${TEST_TMPDIR}"
+fi
+rm -f "${TEST_TMPDIR}/dyad-deny-${DYAD_SESSION_ID}.track"
 
 echo ""
 echo "=== dyad.sh launcher ==="

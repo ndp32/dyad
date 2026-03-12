@@ -1,5 +1,8 @@
 # dyad temp files
 /tmp/
 
+# Machine-specific settings
+.claude/settings.local.json
+
 # macOS
 .DS_Store

@@ -25,8 +25,8 @@ Tool Call → Fast-path (read-only)? → ✅ Allow
 ## Prerequisites
 
 - `claude` CLI (Claude Code) — installed and authenticated
-- `ANTHROPIC_API_KEY` environment variable set (required for the AI supervisor — browser-based CLI auth does not propagate to the supervisor due to environment isolation)
-- `jq` — `brew install jq` on macOS, `apt install jq` on Linux
+- `ANTHROPIC_API_KEY` environment variable set (required for the AI supervisor — browser-based CLI auth does not propagate to the supervisor due to environment isolation). On systems where the key lives in a different variable, set `DYAD_API_KEY_VAR` (see [Environment Variables](#environment-variables))
+- `jq` — `brew install jq` on macOS, `sudo apt install jq` on Linux
 - Bash 3.2+
 - macOS or Linux (WSL untested)
 
@@ -41,7 +41,11 @@ chmod +x dyad.sh
 Optionally add to PATH or create a symlink:
 
 ```bash
+# macOS
 ln -s "$(pwd)/dyad.sh" /usr/local/bin/dyad
+
+# Linux (user-local)
+ln -s "$(pwd)/dyad.sh" ~/.local/bin/dyad
 ```
 
 ## Quick Start
@@ -62,7 +66,9 @@ ln -s "$(pwd)/dyad.sh" /usr/local/bin/dyad
 
 ## Customizing Rules
 
-> **Important:** The default `dyad-rules.json` contains hardcoded paths matching `*/Documents/dyad/*`. Edit these to match your project directory, or every file edit will fall through to the (slower, paid) AI supervisor.
+Rule `file_path` patterns are **relative to the project root** by default. Dyad auto-detects the project root via `git rev-parse --show-toplevel` (or override with `DYAD_PROJECT_ROOT`). A pattern like `*` matches any file under the project root — no hardcoded paths needed.
+
+Legacy absolute patterns (starting with `/` or `*/`) continue to work unchanged.
 
 ### Rule format
 
@@ -70,13 +76,13 @@ ln -s "$(pwd)/dyad.sh" /usr/local/bin/dyad
 {
   "tool": "Edit",
   "action": "allow",
-  "match": { "file_path": "*/my-project/*" },
-  "reason": "Project file edits are safe",
-  "_note": "Optional human-readable note"
+  "match": { "file_path": "*" },
+  "reason": "Project file edits are safe"
 }
 ```
 
 - The `match` object maps tool input field names (e.g. `command`, `file_path`) to glob patterns
+- `file_path` patterns that don't start with `/` or `*/` are resolved relative to the project root
 - An empty `match` object (`{}`) matches all invocations of that tool
 - First match wins — place deny rules before allow rules
 - Shell metacharacter protection: allow rules for the Bash `command` field automatically reject values containing `;|&$()` and backticks
@@ -96,7 +102,7 @@ ln -s "$(pwd)/dyad.sh" /usr/local/bin/dyad
     {
       "tool": "Edit",
       "action": "allow",
-      "match": { "file_path": "*/my-project/*" },
+      "match": { "file_path": "*" },
       "reason": "Project file edits are safe"
     },
     {
@@ -107,6 +113,21 @@ ln -s "$(pwd)/dyad.sh" /usr/local/bin/dyad
     }
   ]
 }
+```
+
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `DYAD_API_KEY_VAR` | `ANTHROPIC_API_KEY` | Name of the env var holding the API key. Set to `ANTHROPIC_AUTH_TOKEN` (or any other var) if your key lives elsewhere. |
+| `DYAD_PROJECT_ROOT` | auto-detected via `git rev-parse --show-toplevel`, then `pwd` | Absolute path to the project root. Relative rule patterns are resolved against this. |
+
+```bash
+# Example: use a different API key variable on a shared Linux system
+DYAD_API_KEY_VAR=ANTHROPIC_AUTH_TOKEN ./dyad.sh "implement the login page"
+
+# Example: override project root
+DYAD_PROJECT_ROOT=/home/user/projects/myapp ./dyad.sh "fix the tests"
 ```
 
 ## Security Model
@@ -154,10 +175,10 @@ No log rotation is built in — manage file size manually.
 
 ## Troubleshooting
 
-**"All my tool calls are being denied"** — Check that `ANTHROPIC_API_KEY` is set. Check that the rule file paths match your project directory.
+**"All my tool calls are being denied"** — Check that your API key variable is set (`ANTHROPIC_API_KEY` by default, or the variable named in `DYAD_API_KEY_VAR`). Check that `DYAD_PROJECT_ROOT` (or auto-detected root) is correct — run dyad and look for the "Project root:" line in the startup banner.
 
 **"Dyad is slow"** — Too many tool calls are falling through to the supervisor. Add more rules for common patterns.
 
-**"Supervisor unavailable" in deny reasons** — API key not set or Claude CLI not authenticated.
+**"Supervisor unavailable" in deny reasons** — API key not set or Claude CLI not authenticated. If your key is in a non-default variable, set `DYAD_API_KEY_VAR`.
 
 **"Permission denied"** — Run `chmod +x dyad.sh`.
