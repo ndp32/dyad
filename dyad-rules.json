@@ -1,0 +1,42 @@
+{
+  "default_action": "supervisor",
+  "fast_path_tools": ["Read", "Glob", "Grep", "Explore", "Task*"],
+  "rules": [
+    {
+      "tool": "Bash",
+      "action": "deny",
+      "match": { "command": "rm -rf *" },
+      "reason": "Destructive recursive deletion blocked"
+    },
+    {
+      "tool": "Edit",
+      "action": "allow",
+      "match": { "file_path": "/Users/*/Documents/dyad/*" },
+      "reason": "Project file edits are safe"
+    },
+    {
+      "tool": "Write",
+      "action": "allow",
+      "match": { "file_path": "/Users/*/Documents/dyad/*" },
+      "reason": "Project file writes are safe"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "match": { "command": "npm *" },
+      "reason": "npm commands are safe"
+    },
+    {
+      "tool": "Bash",
+      "action": "allow",
+      "match": { "command": "git *" },
+      "reason": "git commands are safe"
+    },
+    {
+      "tool": "WebFetch",
+      "action": "deny",
+      "match": {},
+      "reason": "Network access requires supervisor approval"
+    }
+  ]
+}
