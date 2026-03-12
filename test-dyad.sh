@@ -336,6 +336,59 @@ for field in ts session tool decision source reason; do
 done
 
 echo ""
+echo "=== Circuit breaker ==="
+
+# Clean tracker from any prior test runs
+rm -f "/tmp/dyad-deny-${DYAD_SESSION_ID}.track"
+
+# 5 consecutive denials of the same tool should escalate
+for i in 1 2 3 4; do
+  run_hook '{"tool_name":"WebFetch","tool_input":{"url":"https://example.com"}}'
+done
+run_hook '{"tool_name":"WebFetch","tool_input":{"url":"https://example.com"}}'
+if echo "$HOOK_REASON" | grep -q "5x consecutive"; then
+  pass "Circuit breaker: 5th consecutive denial escalates"
+else
+  fail "Circuit breaker: 5th denial" "expected '5x consecutive' in reason, got: $HOOK_REASON"
+fi
+
+# An allow should reset the counter
+run_hook '{"tool_name":"Bash","tool_input":{"command":"git status"}}'
+assert_decision "Circuit breaker: allow resets counter" "allow"
+
+# After reset, denials start from 1 again
+run_hook '{"tool_name":"WebFetch","tool_input":{"url":"https://example.com"}}'
+if echo "$HOOK_REASON" | grep -qv "5x consecutive"; then
+  pass "Circuit breaker: counter reset after allow"
+else
+  fail "Circuit breaker: counter reset" "still showing 5x after reset"
+fi
+
+# Different tool resets counter for previous tool
+rm -f "/tmp/dyad-deny-${DYAD_SESSION_ID}.track"
+for i in 1 2 3 4; do
+  run_hook '{"tool_name":"WebFetch","tool_input":{"url":"https://example.com"}}'
+done
+# Deny a different tool — counter resets to 1 for WebSearch
+run_hook '{"tool_name":"WebSearch","tool_input":{"query":"test"}}'
+if echo "$HOOK_REASON" | grep -qv "5x consecutive"; then
+  pass "Circuit breaker: different tool resets counter"
+else
+  fail "Circuit breaker: different tool reset" "still showing 5x for different tool"
+fi
+
+# Back to WebFetch — should NOT be at 5x since counter reset
+run_hook '{"tool_name":"WebFetch","tool_input":{"url":"https://example.com"}}'
+if echo "$HOOK_REASON" | grep -qv "5x consecutive"; then
+  pass "Circuit breaker: previous tool counter reset by different tool"
+else
+  fail "Circuit breaker: previous tool counter" "still showing 5x after different tool"
+fi
+
+# Clean up tracker file
+rm -f "/tmp/dyad-deny-${DYAD_SESSION_ID}.track"
+
+echo ""
 echo "=== dyad.sh launcher ==="
 
 # Helper: capture output from dyad.sh (which may exit non-zero)

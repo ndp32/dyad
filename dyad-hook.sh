@@ -19,6 +19,29 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
 SESSION_ID="${DYAD_SESSION_ID:-unknown}"
 TOOL_INPUT=""  # Deferred past fast-path for performance
 
+# --- Consecutive denial tracking ---
+DENY_TRACKER="/tmp/dyad-deny-${SESSION_ID}.track"
+
+increment_deny_count() {
+  local tool="$1"
+  local current_tool="" count=0
+  if [[ -f "$DENY_TRACKER" ]]; then
+    current_tool=$(head -1 "$DENY_TRACKER" 2>/dev/null)
+    count=$(tail -1 "$DENY_TRACKER" 2>/dev/null)
+  fi
+  if [[ "$current_tool" == "$tool" ]]; then
+    count=$((count + 1))
+  else
+    count=1
+  fi
+  printf '%s\n%d\n' "$tool" "$count" > "$DENY_TRACKER"
+  echo "$count"
+}
+
+reset_deny_count() {
+  rm -f "$DENY_TRACKER"
+}
+
 # --- Utility functions ---
 
 audit_log() {
@@ -40,6 +63,7 @@ audit_log() {
 
 output_allow() {
   local reason="${1:-Approved}"
+  reset_deny_count
   reason="${reason//\\/\\\\}"
   reason="${reason//\"/\\\"}"
   reason="${reason//$'\n'/\\n}"
@@ -48,11 +72,16 @@ output_allow() {
 
 output_deny() {
   local reason="${1:-Denied by dyad}"
-  reason="dyad denied: ${reason}"
+  local count
+  count=$(increment_deny_count "$TOOL_NAME")
   reason="${reason//\\/\\\\}"
   reason="${reason//\"/\\\"}"
   reason="${reason//$'\n'/\\n}"
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$reason"
+  if [[ "$count" -ge 5 ]]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"dyad denied (5x consecutive): %s"}}\n' "$reason"
+  else
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"dyad denied: %s"}}\n' "$reason"
+  fi
 }
 
 # --- Layer 0: Fast-path for read-only tools ---
