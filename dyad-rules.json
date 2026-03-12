@@ -1,6 +1,4 @@
 {
-  "default_action": "supervisor",
-  "fast_path_tools": ["Read", "Glob", "Grep", "Explore", "Task*"],
   "rules": [
     {
       "tool": "Bash",
@@ -36,7 +34,7 @@
       "tool": "WebFetch",
       "action": "deny",
       "match": {},
-      "reason": "Network access requires supervisor approval"
+      "reason": "Network access blocked by default"
     }
   ]
 }

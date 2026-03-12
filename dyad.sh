@@ -105,24 +105,12 @@ trap cleanup EXIT INT TERM
 printf '%s' "$TASK" > "$TASK_FILE"
 
 # --- Write hook settings ---
-cat > "$HOOK_SETTINGS" <<SETTINGS
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "DYAD_TASK_FILE='${TASK_FILE}' DYAD_RULES_FILE='${RULES_FILE}' DYAD_APPROVE_ALL='${APPROVE_ALL}' DYAD_SESSION_ID='${SESSION_ID}' '${HOOK_SCRIPT}'",
-            "timeout": 60
-          }
-        ]
-      }
-    ]
-  }
-}
-SETTINGS
+HOOK_CMD="DYAD_TASK_FILE='${TASK_FILE}' DYAD_RULES_FILE='${RULES_FILE}' DYAD_APPROVE_ALL='${APPROVE_ALL}' DYAD_SESSION_ID='${SESSION_ID}' '${HOOK_SCRIPT}'"
+
+jq -nc \
+  --arg cmd "$HOOK_CMD" \
+  '{hooks:{PreToolUse:[{matcher:"",hooks:[{type:"command",command:$cmd,timeout:60}]}]}}' \
+  > "$HOOK_SETTINGS"
 
 # --- Launch Claude Code ---
 echo "dyad: Starting session ${SESSION_ID}"
