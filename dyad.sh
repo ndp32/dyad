@@ -42,6 +42,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --rules)
+      [[ $# -lt 2 ]] && { echo "Error: --rules requires a file path argument." >&2; exit 1; }
       RULES_FILE="$2"
       shift 2
       ;;
@@ -84,8 +85,10 @@ fi
 
 # --- Session setup ---
 SESSION_ID="dyad-$$-$(date +%s)"
-HOOK_SETTINGS="/tmp/dyad-hooks-${SESSION_ID}.json"
-TASK_FILE="/tmp/dyad-task-${SESSION_ID}.txt"
+TMPDIR_DYAD=$(mktemp -d "/tmp/dyad-${SESSION_ID}-XXXXXXXX")
+chmod 700 "$TMPDIR_DYAD"
+HOOK_SETTINGS="${TMPDIR_DYAD}/hooks.json"
+TASK_FILE="${TMPDIR_DYAD}/task.txt"
 HOOK_SCRIPT="${SCRIPT_DIR}/dyad-hook.sh"
 
 # Ensure audit log directory exists
@@ -95,7 +98,7 @@ mkdir -p ~/.dyad
 chmod +x "$HOOK_SCRIPT"
 
 # --- Cleanup on exit ---
-cleanup() { rm -f "$HOOK_SETTINGS" "$TASK_FILE"; }
+cleanup() { rm -rf "$TMPDIR_DYAD"; }
 trap cleanup EXIT INT TERM
 
 # --- Write task context ---

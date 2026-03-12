@@ -69,7 +69,7 @@ assert_valid_json() {
 
 # --- Test environment setup ---
 
-TASK_FILE="/tmp/dyad-test-task-$$.txt"
+TASK_FILE=$(mktemp /tmp/dyad-test-task-XXXXXXXX)
 AUDIT_LOG_BACKUP=""
 
 setup() {
