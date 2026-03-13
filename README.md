@@ -85,7 +85,7 @@ Legacy absolute patterns (starting with `/` or `*/`) continue to work unchanged.
 - `file_path` patterns that don't start with `/` or `*/` are resolved relative to the project root
 - An empty `match` object (`{}`) matches all invocations of that tool
 - First match wins — place deny rules before allow rules
-- Shell metacharacter protection: allow rules for the Bash `command` field automatically reject values containing `;|&$()` and backticks
+- Shell metacharacter protection: allow rules for the Bash `command` field automatically reject values containing `;|&$()><{}!#~`, backticks, and newlines
 - Path traversal protection: allow rules on `file_path` fields reject paths containing `..`
 
 ### Minimal custom rules example
@@ -110,10 +110,18 @@ Legacy absolute patterns (starting with `/` or `*/`) continue to work unchanged.
       "action": "allow",
       "match": { "command": "git *" },
       "reason": "git commands are safe"
+    },
+    {
+      "tool": "WebFetch",
+      "action": "deny",
+      "match": {},
+      "reason": "Network access blocked by default"
     }
   ]
 }
 ```
+
+The included `dyad-rules.json` ships with additional protections (audit log and `.dyad` directory manipulation rules). See the file for the full default ruleset.
 
 ## Environment Variables
 
@@ -135,8 +143,9 @@ DYAD_PROJECT_ROOT=/home/user/projects/myapp ./dyad.sh "fix the tests"
 
 - **Default-deny** — If anything fails (supervisor timeout, parse error), the operation is denied
 - **Fast-path bypass list** — `Read`, `Glob`, `Grep`, `Explore`, `TaskList`, `TaskGet`, `TaskOutput`, `TaskStop` bypass all evaluation (hardcoded, not configurable)
-- **Supervisor prompt injection hardening** — Untrusted data wrapped in XML tags
-- **Environment isolation** — Supervisor runs via `env -i` to prevent hook recursion and state leakage
+- **Symlink resolution** — `file_path` values are resolved via `realpath` before rule evaluation, preventing symlink-based traversal
+- **Supervisor prompt injection hardening** — Untrusted data XML-escaped and wrapped in XML tags
+- **Environment isolation** — Supervisor runs via `env -i` with an isolated `HOME` to prevent hook recursion, state leakage, and dotfile access
 - **Consecutive denial circuit breaker** — If the same tool is denied 5 times in a row, the deny reason is escalated with a "5x consecutive" prefix to signal the agent to change approach. An allow or a different tool resets the counter.
 - **`--approve-all`** — Disables all security checks but still logs; use only in trusted environments
 - **OS-level sandbox** — Optional dedicated unprivileged user (`dyad-sandbox`) isolates Dyad from sensitive files, credentials, and system directories (see [Sandbox Mode](#sandbox-mode))
@@ -158,7 +167,7 @@ jq 'select(.source == "supervisor")' ~/.dyad/audit.log | jq -s length
 jq --arg sid "$SESSION_ID" 'select(.session == $sid)' ~/.dyad/audit.log
 ```
 
-No log rotation is built in — manage file size manually.
+Automatic size-based rotation is built in: when the log exceeds 10 MB, it is rotated to `audit.log.1` (one backup kept).
 
 ## Testing
 
@@ -331,6 +340,10 @@ block out quick proto { tcp, udp } user dyad-sandbox
 Apply with `sudo pfctl -f /etc/pf.conf && sudo pfctl -e`. Note: `pf` resolves hostnames at rule load time — reload rules if CDN IPs rotate.
 
 Remove with: `sudo nft delete table inet dyad_sandbox` (Linux) or edit `/etc/pf.conf` and reload (macOS).
+
+### Session locking
+
+Only one sandbox session can run at a time. A lock file prevents concurrent runs — if a previous session crashed without cleanup, the lock is automatically detected as stale and removed.
 
 ### Sandbox troubleshooting
 
