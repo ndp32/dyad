@@ -182,3 +182,163 @@ No log rotation is built in — manage file size manually.
 **"Supervisor unavailable" in deny reasons** — API key not set or Claude CLI not authenticated. If your key is in a non-default variable, set `DYAD_API_KEY_VAR`.
 
 **"Permission denied"** — Run `chmod +x dyad.sh`.
+
+## Sandbox Mode
+
+OS-level isolation for Dyad. Runs as a dedicated unprivileged user (`dyad-sandbox`) so that even if Dyad's permission layers are bypassed, the OS kernel prevents access to sensitive files, credentials, and system directories.
+
+### What it protects against
+
+| Threat | Protection |
+|--------|-----------|
+| Reading `~/.ssh/id_rsa`, `~/.aws/credentials` | Sandbox user has no access to real home directory |
+| Writing to `/etc/hosts` or system files | Sandbox user has no write access to system dirs |
+| `rm -rf ~/*` | Sandbox user's `$HOME` is disposable; real home untouched |
+| Credential theft | No credentials in sandbox; API key passed via temp file |
+| API key sniffing via `ps aux` | Key in file (not process table), readable only by sandbox user |
+| Privilege re-escalation via sudo | Disabled password, nologin shell, no sudo group |
+| Symlink escape during cleanup | All `rm -rf` operations verify target is not a symlink |
+
+**Acknowledged limitations:** World-readable files (`/etc/passwd`, parts of `/proc`), shared kernel exploits, IPC leakage (Unix sockets, `/dev/shm`), and network exfiltration (see optional firewall hardening below) are not prevented by user-based sandboxing.
+
+### Prerequisites
+
+- `sudo` access on the machine
+- `claude` CLI, `jq`, and `git` installed
+- `rsync` (for non-git projects — pre-installed on macOS and most Linux)
+- No Docker or container runtime required
+
+### Quick start
+
+```bash
+# 1. Set up the sandbox (creates user, copies project, installs scripts)
+./dyad-sandbox-setup.sh /path/to/your/project
+
+# 2. Run a task in the sandbox
+./dyad-sandbox-run.sh "implement the login page"
+
+# 3. Apply the results to your real project
+git apply /tmp/dyad-results-XXXXXXXX/changes.diff
+
+# 4. When done, tear down the sandbox
+./dyad-sandbox-teardown.sh
+```
+
+### Setup options
+
+```bash
+# Add extra tools to the sandbox PATH
+./dyad-sandbox-setup.sh --tools "ruby,rake,bundle" /path/to/project
+
+# Preview what would be done (no changes)
+./dyad-sandbox-setup.sh --dry-run /path/to/project
+```
+
+The setup script auto-detects project build tools from `package.json` (npm/node/npx), `Makefile` (make), `requirements.txt`/`pyproject.toml` (python3/pip), and `Cargo.toml` (cargo). Only symlinks to these specific binaries are added to the sandbox PATH — not entire directories.
+
+### Run options
+
+```bash
+# Ephemeral (default): fresh copy each run, destroyed after
+./dyad-sandbox-run.sh "fix the tests"
+
+# Persistent: keep workspace for iterative work
+./dyad-sandbox-run.sh --no-cleanup "fix the tests"
+# Subsequent runs reuse the workspace
+
+# Custom rules
+./dyad-sandbox-run.sh --rules strict-rules.json "deploy prep"
+
+# Auto-approve mode
+./dyad-sandbox-run.sh --approve-all "refactor the auth module"
+```
+
+### Result extraction
+
+After each run, changes are extracted as a single `git diff`:
+
+```bash
+# Results are in a secure temp directory
+ls /tmp/dyad-results-XXXXXXXX/
+#   changes.diff  — all file modifications
+#   audit.log     — sandbox session audit trail
+
+# Apply changes to your real project
+cd /path/to/your/project
+git apply /tmp/dyad-results-XXXXXXXX/changes.diff
+
+# Review the audit log
+jq . /tmp/dyad-results-XXXXXXXX/audit.log
+```
+
+### Project copy behavior
+
+**Git projects:** Uses `git archive HEAD` which exports only the **committed state at HEAD**. Uncommitted changes will NOT be present in the sandbox. The setup script warns if the working tree is dirty. To exclude files from the archive, use `.gitattributes` with `export-ignore`:
+
+```gitattributes
+# .gitattributes — exclude from sandbox copies
+.env export-ignore
+secrets/ export-ignore
+```
+
+**Non-git projects:** Uses `rsync` with exclusions (`.git`, `.env`, `.env.*`, `node_modules`, `.npmrc`, `.ssh`, `.aws`, `.docker`, `*.pem`, `*.key`, `credentials.json`).
+
+### Project size recommendations
+
+| Project size | Ephemeral overhead | Recommendation |
+|-------------|-------------------|----------------|
+| <1,000 files | <2 seconds | Ephemeral (default) |
+| 1,000-10,000 files | 5-15 seconds | Ephemeral acceptable |
+| 10,000-50,000 files | 15-60 seconds | Consider `--no-cleanup` |
+| >50,000 files | >60 seconds | Use `--no-cleanup` |
+
+### Optional firewall hardening
+
+By default, the sandbox has no network restrictions beyond Dyad's `WebFetch` deny rule. For stricter isolation, add per-user firewall rules:
+
+**Linux (nftables — recommended):**
+```bash
+SANDBOX_UID=$(id -u dyad-sandbox)
+ANTHROPIC_IP=$(dig +short api.anthropic.com | head -1)
+
+sudo nft add table inet dyad_sandbox
+sudo nft add chain inet dyad_sandbox output { type filter hook output priority 0 \; }
+sudo nft add rule inet dyad_sandbox output meta skuid $SANDBOX_UID udp dport 53 accept
+sudo nft add rule inet dyad_sandbox output meta skuid $SANDBOX_UID tcp dport 53 accept
+sudo nft add rule inet dyad_sandbox output meta skuid $SANDBOX_UID tcp dport 443 ip daddr $ANTHROPIC_IP accept
+sudo nft add rule inet dyad_sandbox output meta skuid $SANDBOX_UID counter drop
+```
+
+**Linux (iptables — legacy):**
+```bash
+sudo iptables -A OUTPUT -m owner --uid-owner dyad-sandbox -p udp --dport 53 -j ACCEPT
+sudo iptables -A OUTPUT -m owner --uid-owner dyad-sandbox -p tcp --dport 53 -j ACCEPT
+sudo iptables -A OUTPUT -m owner --uid-owner dyad-sandbox -d api.anthropic.com -p tcp --dport 443 -j ACCEPT
+sudo iptables -A OUTPUT -m owner --uid-owner dyad-sandbox -j DROP
+```
+
+**macOS (pf):**
+```
+# Add to /etc/pf.conf:
+pass out quick proto { tcp, udp } to any port 53 user dyad-sandbox
+pass out quick proto tcp to api.anthropic.com port 443 user dyad-sandbox
+block out quick proto { tcp, udp } user dyad-sandbox
+```
+
+Apply with `sudo pfctl -f /etc/pf.conf && sudo pfctl -e`. Note: `pf` resolves hostnames at rule load time — reload rules if CDN IPs rotate.
+
+Remove with: `sudo nft delete table inet dyad_sandbox` (Linux) or edit `/etc/pf.conf` and reload (macOS).
+
+### Sandbox troubleshooting
+
+**"Sandbox user does not exist"** — Run `dyad-sandbox-setup.sh` first.
+
+**"PATH problems / command not found in sandbox"** — The sandbox uses a narrow PATH with only symlinked binaries. Add missing tools with `--tools "tool1,tool2"` during setup, or re-run setup.
+
+**"Claude Code auth errors"** — Ensure `ANTHROPIC_API_KEY` is set in your shell before running. Consider using a separate, lower-privilege API key for sandbox runs.
+
+**"Permission denied on results"** — Results are extracted to a `mktemp -d` directory owned by your user. Check that the extraction step completed (look for the "Results extracted to:" message).
+
+**"CLAUDE.md not loaded"** — Claude Code does not load CLAUDE.md files in headless mode by default. To enable, add `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` to the sandbox environment in `dyad-sandbox-run.sh`.
+
+**"Stale workspace"** — If a previous run was interrupted, the workspace may contain stale data. Re-run setup to refresh, or delete `/opt/dyad-workspace/project` manually and re-run.

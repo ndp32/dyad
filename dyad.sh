@@ -104,6 +104,10 @@ fi
 # --- Resolve API key ---
 _API_KEY_VAR="${DYAD_API_KEY_VAR:-ANTHROPIC_API_KEY}"
 RESOLVED_API_KEY="${!_API_KEY_VAR:-}"
+# Support file-based API key (used by sandbox mode)
+if [[ -z "$RESOLVED_API_KEY" && -n "${DYAD_API_KEY_FILE:-}" && -f "$DYAD_API_KEY_FILE" ]]; then
+  RESOLVED_API_KEY="$(cat "$DYAD_API_KEY_FILE")"
+fi
 if [[ -z "$RESOLVED_API_KEY" && "$APPROVE_ALL" != "true" ]]; then
   echo "Warning: API key variable '${_API_KEY_VAR}' is empty — supervisor calls will fail (Layer 2 defaults to deny)" >&2
 fi
@@ -120,7 +124,7 @@ HOOK_SCRIPT="${SCRIPT_DIR}/dyad-hook.sh"
 mkdir -p ~/.dyad
 
 # Ensure hook script is executable
-chmod +x "$HOOK_SCRIPT"
+[[ -x "$HOOK_SCRIPT" ]] || chmod +x "$HOOK_SCRIPT"
 
 # --- Cleanup on exit ---
 cleanup() { rm -rf "$TMPDIR_DYAD"; }
