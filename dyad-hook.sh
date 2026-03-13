@@ -2,9 +2,14 @@
 # dyad-hook.sh — PreToolUse hook for dyad permission proxy
 #
 # Receives Claude Code PreToolUse JSON on stdin.
-# Applies a two-layer permission strategy:
-#   Layer 1: Rule-based filtering (fast-path + configurable rules)
+# Applies a three-layer permission strategy:
+#   Layer 0: Fast-path passthrough for read-only tools
+#   Layer 1: Rule-based filtering (configurable rules)
 #   Layer 2: AI supervisor via claude -p --model haiku
+#
+# Note: This script deliberately omits set -euo pipefail because it must
+# always produce valid output (even on errors) and never exit non-zero
+# due to an intermediate command failure. Default-deny on any error.
 #
 # Environment variables (set by dyad.sh):
 #   DYAD_TASK_FILE        — path to file containing the original user task
@@ -13,7 +18,7 @@
 #   DYAD_SESSION_ID       — session identifier for audit logging
 #   DYAD_PROJECT_ROOT     — absolute path to project root (for relative rule patterns)
 #   DYAD_SESSION_TMPDIR   — session temp directory (for deny tracker)
-#   DYAD_RESOLVED_API_KEY — resolved API key for supervisor calls
+#   DYAD_API_KEY_FILE     — path to file containing the API key for supervisor calls
 
 # Read hook input from stdin
 INPUT=$(cat)
@@ -109,8 +114,8 @@ fi
 # --- Layer 1: Rule evaluation (single jq call) ---
 RULE_RESULT=$(jq -c --slurpfile rules "${DYAD_RULES_FILE:-/dev/null}" \
   --arg project_root "${DYAD_PROJECT_ROOT:-}" '
-  # Convert glob patterns to anchored regex: * → .*
-  def glob_to_regex: "^" + gsub("\\*"; ".*") + "$";
+  # Convert glob patterns to anchored regex: escape regex metacharacters, then * → .*
+  def glob_to_regex: "^" + (gsub("(?<c>[.+?^${}()|\\[\\]\\\\])"; "\\\(.c)") | gsub("\\*"; ".*")) + "$";
 
   # Resolve a file_path pattern: prepend project root if relative.
   # "Relative" = does not start with "/" or "*/" (the legacy absolute convention).
@@ -120,8 +125,8 @@ RULE_RESULT=$(jq -c --slurpfile rules "${DYAD_RULES_FILE:-/dev/null}" \
     else .
     end;
 
-  # Shell metacharacters that indicate command chaining/injection
-  def has_shell_meta: test("[;|&$`()\\n]");
+  # Shell metacharacters that indicate command chaining/injection/redirection
+  def has_shell_meta: test("[;|&$`()\\n\\r><{}!#~]");
 
   . as $input |
   ($rules[0].rules // []) |
@@ -208,6 +213,12 @@ _timeout_cmd() {
   return $ret
 }
 
+# Read API key from file (file-based passing avoids exposure in process table)
+_SUPERVISOR_API_KEY=""
+if [[ -n "${DYAD_API_KEY_FILE:-}" && -f "$DYAD_API_KEY_FILE" ]]; then
+  _SUPERVISOR_API_KEY=$(cat "$DYAD_API_KEY_FILE")
+fi
+
 # Clear inherited environment to prevent recursion and state leakage.
 # CLAUDECODE triggers hook inheritance in Claude Code — clearing it prevents
 # the supervisor's own tool calls from triggering dyad hooks (infinite recursion).
@@ -216,7 +227,7 @@ if SUPERVISOR_RESULT=$(_timeout_cmd env -i \
     PATH="$PATH" \
     HOME="$HOME" \
     USER="${USER:-}" \
-    ANTHROPIC_API_KEY="${DYAD_RESOLVED_API_KEY:-}" \
+    ANTHROPIC_API_KEY="${_SUPERVISOR_API_KEY}" \
     claude -p --model haiku --output-format json --json-schema "$SUPERVISOR_SCHEMA" "$SUPERVISOR_PROMPT" 2>/dev/null); then
   SUP_DECISION=$(echo "$SUPERVISOR_RESULT" | jq -r '.structured_output.decision // empty')
   SUP_REASON=$(echo "$SUPERVISOR_RESULT" | jq -r '.structured_output.reason // "No reason given"')

