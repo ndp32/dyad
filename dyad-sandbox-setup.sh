@@ -337,6 +337,10 @@ else
       --exclude='node_modules' --exclude='.npmrc' \
       --exclude='.ssh' --exclude='.aws' --exclude='.docker' \
       --exclude='*.pem' --exclude='*.key' --exclude='credentials.json' \
+      --exclude='.gcloud' --exclude='.azure' --exclude='.kube' \
+      --exclude='*.p12' --exclude='*.pfx' --exclude='*.jks' --exclude='*.keystore' \
+      --exclude='.netrc' --exclude='.pgpass' --exclude='.htpasswd' \
+      --exclude='.terraform' --exclude='terraform.tfstate' --exclude='terraform.tfstate.backup' \
       "$PROJECT_SRC/" "$PROJECT_DEST/"
     sudo chown -R ${SANDBOX_USER}: "$PROJECT_DEST"
     # Strip any setuid/setgid bits from copied files

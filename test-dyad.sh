@@ -297,6 +297,25 @@ run_hook '{"tool_name":"Bash","tool_input":{"command":"ls ~/.dyad"}}'
 assert_decision "Deny: .dyad directory access" "deny"
 
 echo ""
+echo "=== Edit/Write deny rules for audit.log and .dyad ==="
+
+run_hook "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$HOME/.dyad/audit.log\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
+assert_decision "Deny: Edit audit.log" "deny"
+
+run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$HOME/.dyad/audit.log\",\"content\":\"bad\"}}"
+assert_decision "Deny: Write audit.log" "deny"
+
+run_hook "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$HOME/.dyad/settings.json\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
+assert_decision "Deny: Edit .dyad config" "deny"
+
+run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$HOME/.dyad/settings.json\",\"content\":\"bad\"}}"
+assert_decision "Deny: Write .dyad config" "deny"
+
+# Normal project file edits should still be allowed
+run_hook "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${SCRIPT_DIR}/src/app.js\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
+assert_decision "Allow: Edit project file (not blocked by audit deny)" "allow"
+
+echo ""
 echo "=== Path traversal prevention ==="
 
 run_hook "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${SCRIPT_DIR}/../../etc/passwd\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
@@ -316,6 +335,33 @@ fi
 # Normal paths should still be allowed
 run_hook "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${SCRIPT_DIR}/src/app.js\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
 assert_decision "Path traversal: normal Edit still allowed" "allow"
+
+echo ""
+echo "=== Symlink traversal prevention ==="
+
+# Create a symlink inside project root pointing outside
+SYMLINK_TEST_DIR="${TEST_TMPDIR}/symlink-test"
+mkdir -p "$SYMLINK_TEST_DIR"
+ln -sf /etc/passwd "$SYMLINK_TEST_DIR/evil-link"
+
+# Edit targeting a symlink pointing outside project root should be denied
+# (realpath resolves symlink to /etc/passwd which is outside DYAD_PROJECT_ROOT)
+run_hook "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"${SYMLINK_TEST_DIR}/evil-link\",\"old_string\":\"a\",\"new_string\":\"b\"}}"
+if [[ "$HOOK_DECISION" != "allow" ]]; then
+  pass "Symlink traversal: Edit via symlink outside project denied"
+else
+  fail "Symlink traversal: Edit via symlink" "should not be allowed"
+fi
+
+# Write targeting a symlink pointing outside project root
+run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"${SYMLINK_TEST_DIR}/evil-link\",\"content\":\"bad\"}}"
+if [[ "$HOOK_DECISION" != "allow" ]]; then
+  pass "Symlink traversal: Write via symlink outside project denied"
+else
+  fail "Symlink traversal: Write via symlink" "should not be allowed"
+fi
+
+rm -rf "$SYMLINK_TEST_DIR"
 
 echo ""
 echo "=== Edge cases ==="

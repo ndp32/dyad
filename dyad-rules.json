@@ -20,6 +20,30 @@
     },
     {
       "tool": "Edit",
+      "action": "deny",
+      "match": { "file_path": "*audit.log*" },
+      "reason": "Audit log manipulation blocked"
+    },
+    {
+      "tool": "Edit",
+      "action": "deny",
+      "match": { "file_path": "*.dyad*" },
+      "reason": "Dyad config directory manipulation blocked"
+    },
+    {
+      "tool": "Write",
+      "action": "deny",
+      "match": { "file_path": "*audit.log*" },
+      "reason": "Audit log manipulation blocked"
+    },
+    {
+      "tool": "Write",
+      "action": "deny",
+      "match": { "file_path": "*.dyad*" },
+      "reason": "Dyad config directory manipulation blocked"
+    },
+    {
+      "tool": "Edit",
       "action": "allow",
       "match": { "file_path": "*" },
       "reason": "Project file edits are safe"
