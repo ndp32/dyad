@@ -120,6 +120,7 @@ Legacy absolute patterns (starting with `/` or `*/`) continue to work unchanged.
 | Variable | Default | Description |
 |---|---|---|
 | `DYAD_API_KEY_VAR` | `ANTHROPIC_API_KEY` | Name of the env var holding the API key. Set to `ANTHROPIC_AUTH_TOKEN` (or any other var) if your key lives elsewhere. |
+| `DYAD_API_KEY_FILE` | *(unset)* | Path to a file containing the API key. Used by sandbox mode to avoid exposing the key in the process table. Takes effect only when the env var key is empty. |
 | `DYAD_PROJECT_ROOT` | auto-detected via `git rev-parse --show-toplevel`, then `pwd` | Absolute path to the project root. Relative rule patterns are resolved against this. |
 
 ```bash
@@ -138,8 +139,7 @@ DYAD_PROJECT_ROOT=/home/user/projects/myapp ./dyad.sh "fix the tests"
 - **Environment isolation** — Supervisor runs via `env -i` to prevent hook recursion and state leakage
 - **Consecutive denial circuit breaker** — If the same tool is denied 5 times in a row, the deny reason is escalated with a "5x consecutive" prefix to signal the agent to change approach. An allow or a different tool resets the counter.
 - **`--approve-all`** — Disables all security checks but still logs; use only in trusted environments
-
-Dyad is in active development. See the `todos/` directory for known issues being addressed.
+- **OS-level sandbox** — Optional dedicated unprivileged user (`dyad-sandbox`) isolates Dyad from sensitive files, credentials, and system directories (see [Sandbox Mode](#sandbox-mode))
 
 ## Audit Logging
 
@@ -163,7 +163,7 @@ No log rotation is built in — manage file size manually.
 ## Testing
 
 ```bash
-# Fast tests (no API calls, no cost)
+# Fast tests (no API calls, no sudo, no cost)
 ./test-dyad.sh
 
 # All tests including live supervisor (requires API key, makes API calls)
@@ -171,6 +171,9 @@ No log rotation is built in — manage file size manually.
 
 # Supervisor tests only
 ./test-dyad.sh --supervisor
+
+# Sandbox integration tests (requires sudo — creates/destroys real sandbox)
+./test-dyad.sh --sandbox
 ```
 
 ## Troubleshooting
