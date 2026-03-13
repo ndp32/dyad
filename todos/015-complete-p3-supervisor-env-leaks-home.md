@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p3
 issue_id: "015"
 tags: [code-review, security]
@@ -45,9 +45,9 @@ The supervisor call in `dyad-hook.sh` lines 215-220 uses `env -i` to clear the e
 
 ## Acceptance Criteria
 
-- [ ] Supervisor does not access user's real HOME directory
-- [ ] Supervisor calls still function correctly
-- [ ] Claude CLI auth still works with isolated HOME
+- [x] Supervisor does not access user's real HOME directory
+- [x] Supervisor calls still function correctly
+- [x] Claude CLI auth still works with isolated HOME
 
 ## Work Log
 

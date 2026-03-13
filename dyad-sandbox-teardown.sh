@@ -14,10 +14,11 @@ set -euo pipefail
 #   --dry-run    Print what would be executed without running
 #   --help       Show this help message
 
-# --- Configuration ---
-SANDBOX_USER="dyad-sandbox"
-WORKSPACE="/opt/dyad-workspace"
-DYAD_INSTALL="/opt/dyad"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# --- Shared library ---
+# shellcheck source=dyad-lib.sh
+source "${SCRIPT_DIR}/dyad-lib.sh"
 
 # --- Argument parsing ---
 DRY_RUN=false
@@ -37,7 +38,6 @@ This removes:
   - The workspace at /opt/dyad-workspace
   - The Dyad script installation at /opt/dyad
 
-Note: Firewall rules (if added) must be removed manually.
 EOF
   exit 0
 }
@@ -63,24 +63,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# --- Utility functions ---
-
-detect_platform() {
-  case "$(uname -s)" in
-    Darwin) echo "macos" ;;
-    Linux)  echo "linux" ;;
-    *)      echo "unsupported" ;;
-  esac
-}
-
-run_sudo() {
-  if [[ "$DRY_RUN" == "true" ]]; then
-    echo "[dry-run] sudo $*"
-  else
-    sudo "$@"
-  fi
-}
-
 PLATFORM=$(detect_platform)
 if [[ "$PLATFORM" == "unsupported" ]]; then
   echo "Error: Unsupported platform: $(uname -s)." >&2
@@ -104,6 +86,7 @@ echo ""
 echo "# --- Kill sandbox processes ---"
 
 if id $SANDBOX_USER &>/dev/null; then
+  release_session_lock
   run_sudo pkill -u $SANDBOX_USER 2>/dev/null || true
   if [[ "$DRY_RUN" != "true" ]]; then
     sleep 1
@@ -184,12 +167,7 @@ else
   fi
 fi
 
-# --- Firewall note ---
 echo ""
 echo "========================================="
 echo "  Sandbox removed."
-echo ""
-echo "  If you added firewall rules, remove them manually:"
-echo "    macOS: edit /etc/pf.conf and run: sudo pfctl -f /etc/pf.conf"
-echo "    Linux: sudo nft delete table inet dyad_sandbox"
 echo "========================================="

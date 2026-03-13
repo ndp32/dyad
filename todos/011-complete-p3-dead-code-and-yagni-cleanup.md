@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p3
 issue_id: "011"
 tags: [code-review, quality]
@@ -50,12 +50,12 @@ Several scripts contain dead code, unreachable code paths, and features that are
 
 ## Acceptance Criteria
 
-- [ ] Dead `DYAD_SANDBOX_PROJECT_SRC` code removed
-- [ ] Auto-detect build tools removed, `--help` updated with examples
-- [ ] File count warning removed
-- [ ] Firewall note removed from teardown
-- [ ] Result extraction captures uncommitted changes
-- [ ] All tests pass
+- [x] Dead `DYAD_SANDBOX_PROJECT_SRC` code removed
+- [x] Auto-detect build tools removed, `--help` updated with examples
+- [x] File count warning removed
+- [x] Firewall note removed from teardown
+- [x] Result extraction captures uncommitted changes
+- [x] All tests pass
 
 ## Work Log
 

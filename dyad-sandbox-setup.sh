@@ -17,11 +17,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# --- Configuration ---
-SANDBOX_USER="dyad-sandbox"
-WORKSPACE="/opt/dyad-workspace"
-DYAD_INSTALL="/opt/dyad"
-SANDBOX_BIN="${WORKSPACE}/.bin"
+# --- Shared library ---
+# shellcheck source=dyad-lib.sh
+source "${SCRIPT_DIR}/dyad-lib.sh"
 
 # --- Argument parsing ---
 DRY_RUN=false
@@ -95,29 +93,12 @@ PROJECT_SRC="$(cd "$PROJECT_SRC" && pwd)"
 
 # --- Utility functions ---
 
-detect_platform() {
-  case "$(uname -s)" in
-    Darwin) echo "macos" ;;
-    Linux)  echo "linux" ;;
-    *)      echo "unsupported" ;;
-  esac
-}
-
 # Execute or print command depending on dry-run mode
 run() {
   if [[ "$DRY_RUN" == "true" ]]; then
     echo "[dry-run] $*"
   else
     "$@"
-  fi
-}
-
-# Same but for commands that need sudo
-run_sudo() {
-  if [[ "$DRY_RUN" == "true" ]]; then
-    echo "[dry-run] sudo $*"
-  else
-    sudo "$@"
   fi
 }
 
@@ -166,8 +147,7 @@ fi
 echo ""
 echo "# --- Create sandbox user ---"
 
-ROOT_GROUP="root"
-[[ "$PLATFORM" == "macos" ]] && ROOT_GROUP="wheel"
+ROOT_GROUP=$(resolve_root_group "$PLATFORM")
 
 if [[ "$PLATFORM" == "macos" ]]; then
   if dscl . -read /Users/$SANDBOX_USER &>/dev/null; then
@@ -234,40 +214,6 @@ for cmd in claude jq git; do
   echo "  $cmd -> $REAL_PATH"
 done
 
-# Auto-detect project build tools
-if [[ -f "$PROJECT_SRC/package.json" ]]; then
-  for cmd in npm node npx; do
-    REAL_PATH="$(command -v "$cmd" 2>/dev/null)" || true
-    if [[ -n "$REAL_PATH" ]]; then
-      run_sudo ln -sf "$REAL_PATH" "$SANDBOX_BIN/$cmd"
-      echo "  $cmd -> $REAL_PATH (auto-detected: package.json)"
-    fi
-  done
-fi
-if [[ -f "$PROJECT_SRC/Makefile" ]] || [[ -f "$PROJECT_SRC/makefile" ]]; then
-  REAL_PATH="$(command -v make 2>/dev/null)" || true
-  if [[ -n "$REAL_PATH" ]]; then
-    run_sudo ln -sf "$REAL_PATH" "$SANDBOX_BIN/make"
-    echo "  make -> $REAL_PATH (auto-detected: Makefile)"
-  fi
-fi
-if [[ -f "$PROJECT_SRC/requirements.txt" ]] || [[ -f "$PROJECT_SRC/pyproject.toml" ]]; then
-  for cmd in python3 pip pip3; do
-    REAL_PATH="$(command -v "$cmd" 2>/dev/null)" || true
-    if [[ -n "$REAL_PATH" ]]; then
-      run_sudo ln -sf "$REAL_PATH" "$SANDBOX_BIN/$cmd"
-      echo "  $cmd -> $REAL_PATH (auto-detected: Python project)"
-    fi
-  done
-fi
-if [[ -f "$PROJECT_SRC/Cargo.toml" ]]; then
-  REAL_PATH="$(command -v cargo 2>/dev/null)" || true
-  if [[ -n "$REAL_PATH" ]]; then
-    run_sudo ln -sf "$REAL_PATH" "$SANDBOX_BIN/cargo"
-    echo "  cargo -> $REAL_PATH (auto-detected: Cargo.toml)"
-  fi
-fi
-
 # User-specified extra tools
 if [[ -n "$EXTRA_TOOLS" ]]; then
   IFS=',' read -ra TOOLS <<< "$EXTRA_TOOLS"
@@ -301,12 +247,7 @@ fi
 run_sudo -u $SANDBOX_USER mkdir -p "$PROJECT_DEST"
 
 if [[ -d "$PROJECT_SRC/.git" ]]; then
-  # File count warning
   FILE_COUNT=$(git -C "$PROJECT_SRC" ls-files | wc -l | xargs)
-  if [[ "$FILE_COUNT" -gt 50000 ]]; then
-    echo "  Warning: project has $FILE_COUNT tracked files. Sandbox copy may take over 60 seconds."
-    echo "  Consider using --no-cleanup to avoid re-copying on subsequent runs."
-  fi
 
   # Warn about uncommitted changes
   DIRTY=$(git -C "$PROJECT_SRC" status --porcelain 2>/dev/null) || true
@@ -364,9 +305,9 @@ echo ""
 echo "# --- Install Dyad scripts ---"
 
 run_sudo mkdir -p "$DYAD_INSTALL"
-run_sudo cp "$SCRIPT_DIR/dyad.sh" "$SCRIPT_DIR/dyad-hook.sh" "$SCRIPT_DIR/dyad-rules.json" "$DYAD_INSTALL/"
+run_sudo cp "$SCRIPT_DIR/dyad.sh" "$SCRIPT_DIR/dyad-hook.sh" "$SCRIPT_DIR/dyad-lib.sh" "$SCRIPT_DIR/dyad-rules.json" "$DYAD_INSTALL/"
 run_sudo chmod 755 "$DYAD_INSTALL/dyad.sh" "$DYAD_INSTALL/dyad-hook.sh"
-run_sudo chmod 644 "$DYAD_INSTALL/dyad-rules.json"
+run_sudo chmod 644 "$DYAD_INSTALL/dyad-lib.sh" "$DYAD_INSTALL/dyad-rules.json"
 run_sudo chown -R root:${ROOT_GROUP} "$DYAD_INSTALL"
 
 echo "  Installed to: $DYAD_INSTALL"

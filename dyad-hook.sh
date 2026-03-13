@@ -272,9 +272,13 @@ fi
 # CLAUDECODE triggers hook inheritance in Claude Code — clearing it prevents
 # the supervisor's own tool calls from triggering dyad hooks (infinite recursion).
 # We use env -i to also clear any other session-specific state.
+# HOME is set to an isolated temp directory to prevent the supervisor from
+# accessing user dotfiles (~/.claude/settings.json, ~/.bashrc, etc.).
+_SUPERVISOR_HOME="${DYAD_SESSION_TMPDIR:-/tmp}/supervisor-home"
+mkdir -p "$_SUPERVISOR_HOME" 2>/dev/null || true
 if SUPERVISOR_RESULT=$(_timeout_cmd env -i \
     PATH="$PATH" \
-    HOME="$HOME" \
+    HOME="$_SUPERVISOR_HOME" \
     USER="${USER:-}" \
     ANTHROPIC_API_KEY="${_SUPERVISOR_API_KEY}" \
     claude -p --model haiku --output-format json --json-schema "$SUPERVISOR_SCHEMA" "$SUPERVISOR_PROMPT" 2>/dev/null); then

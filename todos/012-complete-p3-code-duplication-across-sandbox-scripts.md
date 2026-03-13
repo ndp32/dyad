@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p3
 issue_id: "012"
 tags: [code-review, quality]
@@ -67,9 +67,9 @@ Several functions and constants are duplicated verbatim across the three sandbox
 
 ## Acceptance Criteria
 
-- [ ] No functional duplication across sandbox scripts (or documented acceptance of duplication)
-- [ ] All sandbox tests pass
-- [ ] Dry-run mode works for all three scripts
+- [x] No functional duplication across sandbox scripts (or documented acceptance of duplication)
+- [x] All sandbox tests pass
+- [x] Dry-run mode works for all three scripts
 
 ## Work Log
 

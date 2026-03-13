@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p3
 issue_id: "014"
 tags: [code-review, architecture]
@@ -51,7 +51,7 @@ The 1-second sleep after pkill may also be insufficient for all processes to ter
 
 ## Acceptance Criteria
 
-- [ ] Concurrent sandbox sessions do not interfere with each other (or are prevented)
+- [x] Concurrent sandbox sessions do not interfere with each other (or are prevented)
 
 ## Work Log
 

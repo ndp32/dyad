@@ -715,16 +715,78 @@ else
 fi
 
 echo ""
-echo "=== Sandbox scripts: platform detection ==="
+echo "=== Shared library: dyad-lib.sh ==="
 
-# All three scripts should have a detect_platform function
+# dyad-lib.sh should exist and define shared functions/constants
+if [[ -f "${SCRIPT_DIR}/dyad-lib.sh" ]]; then
+  pass "dyad-lib.sh: exists"
+else
+  fail "dyad-lib.sh: exists" "file not found"
+fi
+
+if grep -q "detect_platform()" "${SCRIPT_DIR}/dyad-lib.sh"; then
+  pass "dyad-lib.sh: defines detect_platform"
+else
+  fail "dyad-lib.sh: detect_platform" "function not found"
+fi
+
+if grep -q "run_sudo()" "${SCRIPT_DIR}/dyad-lib.sh"; then
+  pass "dyad-lib.sh: defines run_sudo"
+else
+  fail "dyad-lib.sh: run_sudo" "function not found"
+fi
+
+if grep -q "SANDBOX_USER=" "${SCRIPT_DIR}/dyad-lib.sh"; then
+  pass "dyad-lib.sh: defines SANDBOX_USER"
+else
+  fail "dyad-lib.sh: SANDBOX_USER" "constant not found"
+fi
+
+# All three sandbox scripts should source dyad-lib.sh
 for script in dyad-sandbox-setup.sh dyad-sandbox-run.sh dyad-sandbox-teardown.sh; do
-  if grep -q "detect_platform()" "${SCRIPT_DIR}/$script"; then
-    pass "$script: has detect_platform function"
+  if grep -q 'source.*dyad-lib.sh' "${SCRIPT_DIR}/$script"; then
+    pass "$script: sources dyad-lib.sh"
   else
-    fail "$script: detect_platform" "function not found"
+    fail "$script: sources dyad-lib.sh" "source line not found"
   fi
 done
+
+echo ""
+echo "=== Session lock ==="
+
+# dyad-lib.sh should define lock functions
+if grep -q "acquire_session_lock()" "${SCRIPT_DIR}/dyad-lib.sh"; then
+  pass "Session lock: acquire_session_lock defined in dyad-lib.sh"
+else
+  fail "Session lock: acquire_session_lock" "function not found"
+fi
+
+if grep -q "release_session_lock()" "${SCRIPT_DIR}/dyad-lib.sh"; then
+  pass "Session lock: release_session_lock defined in dyad-lib.sh"
+else
+  fail "Session lock: release_session_lock" "function not found"
+fi
+
+# dyad-sandbox-run.sh should call acquire_session_lock
+if grep -q "acquire_session_lock" "${SCRIPT_DIR}/dyad-sandbox-run.sh"; then
+  pass "Session lock: sandbox-run acquires lock"
+else
+  fail "Session lock: sandbox-run acquires lock" "call not found"
+fi
+
+# dyad-sandbox-run.sh cleanup should release lock
+if grep -q "release_session_lock" "${SCRIPT_DIR}/dyad-sandbox-run.sh"; then
+  pass "Session lock: sandbox-run releases lock"
+else
+  fail "Session lock: sandbox-run releases lock" "call not found"
+fi
+
+# dyad-sandbox-teardown.sh should release lock
+if grep -q "release_session_lock" "${SCRIPT_DIR}/dyad-sandbox-teardown.sh"; then
+  pass "Session lock: sandbox-teardown releases lock"
+else
+  fail "Session lock: sandbox-teardown releases lock" "call not found"
+fi
 
 echo ""
 echo "=== Sandbox scripts: security patterns ==="
@@ -752,6 +814,13 @@ if grep -q 'DYAD_API_KEY_FILE' "${SCRIPT_DIR}/dyad-sandbox-run.sh"; then
   pass "sandbox-run: uses DYAD_API_KEY_FILE (not command-line key)"
 else
   fail "sandbox-run: DYAD_API_KEY_FILE" "file-based key passing not found"
+fi
+
+# Supervisor HOME isolation
+if grep -q 'supervisor-home' "${SCRIPT_DIR}/dyad-hook.sh"; then
+  pass "dyad-hook.sh: supervisor uses isolated HOME"
+else
+  fail "dyad-hook.sh: supervisor HOME isolation" "supervisor-home not found"
 fi
 
 # Process kill before cleanup
@@ -788,8 +857,8 @@ else
   fail "sandbox-run: GIT_CONFIG_GLOBAL" "config isolation not found"
 fi
 
-# Root-owned .bin directory
-if grep -q 'chown.*root' "${SCRIPT_DIR}/dyad-sandbox-setup.sh" && grep -q '\.bin' "${SCRIPT_DIR}/dyad-sandbox-setup.sh"; then
+# Root-owned .bin directory (chown uses ROOT_GROUP variable, SANDBOX_BIN from dyad-lib.sh)
+if grep -q 'chown.*ROOT_GROUP.*SANDBOX_BIN' "${SCRIPT_DIR}/dyad-sandbox-setup.sh"; then
   pass "sandbox-setup: .bin directory is root-owned"
 else
   fail "sandbox-setup: root-owned .bin" "root ownership not found"
@@ -808,7 +877,7 @@ for script in dyad-sandbox-setup.sh dyad-sandbox-run.sh dyad-sandbox-teardown.sh
 done
 
 # Syntax check with bash -n
-for script in dyad-sandbox-setup.sh dyad-sandbox-run.sh dyad-sandbox-teardown.sh; do
+for script in dyad-lib.sh dyad-sandbox-setup.sh dyad-sandbox-run.sh dyad-sandbox-teardown.sh; do
   if bash -n "${SCRIPT_DIR}/$script" 2>&1; then
     pass "$script: passes bash -n syntax check"
   else

@@ -18,11 +18,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# --- Configuration ---
-SANDBOX_USER="dyad-sandbox"
-WORKSPACE="/opt/dyad-workspace"
-DYAD_INSTALL="/opt/dyad"
-SANDBOX_BIN="${WORKSPACE}/.bin"
+# --- Shared library ---
+# shellcheck source=dyad-lib.sh
+source "${SCRIPT_DIR}/dyad-lib.sh"
+
 PROJECT_DEST="${WORKSPACE}/project"
 
 # --- Argument parsing ---
@@ -100,16 +99,6 @@ fi
 
 [[ "$DRY_RUN" == "true" ]] && echo "dyad-sandbox-run: *** DRY RUN — no changes will be made ***"
 
-# --- Utility functions ---
-
-detect_platform() {
-  case "$(uname -s)" in
-    Darwin) echo "macos" ;;
-    Linux)  echo "linux" ;;
-    *)      echo "unsupported" ;;
-  esac
-}
-
 PLATFORM=$(detect_platform)
 
 # --- Pre-flight checks ---
@@ -129,14 +118,9 @@ if [[ ! -f "$DYAD_INSTALL/dyad.sh" ]]; then
   exit 1
 fi
 
-# --- Detect stale workspace ---
-if [[ -d "$PROJECT_DEST" ]] && [[ ! -L "$PROJECT_DEST" ]]; then
-  # Check if there are files beyond the initial git repo
-  STALE_CHECK=$(sudo -u $SANDBOX_USER git -C "$PROJECT_DEST" status --porcelain 2>/dev/null) || true
-  if [[ -n "$STALE_CHECK" ]]; then
-    echo "Warning: Workspace has uncommitted changes from a previous run."
-    echo "  These will be overwritten by the fresh copy."
-  fi
+# --- Acquire session lock (prevents concurrent sandbox runs) ---
+if [[ "$DRY_RUN" != "true" ]]; then
+  acquire_session_lock || exit 1
 fi
 
 # --- Handle custom rules file ---
@@ -149,8 +133,7 @@ if [[ -n "$RULES_FILE" ]]; then
   SANDBOX_RULES="${WORKSPACE}/.dyad-rules-custom.json"
   if [[ "$DRY_RUN" != "true" ]]; then
     sudo cp "$RULES_FILE" "$SANDBOX_RULES"
-    ROOT_GROUP="root"
-    [[ "$PLATFORM" == "macos" ]] && ROOT_GROUP="wheel"
+    ROOT_GROUP=$(resolve_root_group "$PLATFORM")
     sudo chown root:${ROOT_GROUP} "$SANDBOX_RULES"
     sudo chmod 644 "$SANDBOX_RULES"
   fi
@@ -200,6 +183,9 @@ cleanup() {
     sudo rm -f "$SANDBOX_RULES"
   fi
 
+  # Release session lock
+  release_session_lock
+
   return $exit_code
 }
 
@@ -223,16 +209,6 @@ if [[ "$DRY_RUN" != "true" ]]; then
 else
   KEY_FILE="${WORKSPACE}/.dyad-key-XXXXXXXX"
   echo "[dry-run] Create API key temp file: $KEY_FILE"
-fi
-
-# --- Warn about uncommitted changes ---
-# (The setup script copies via git archive which only includes committed state)
-# Re-check here in case user made changes since setup
-if [[ -n "${DYAD_SANDBOX_PROJECT_SRC:-}" ]] && [[ -d "${DYAD_SANDBOX_PROJECT_SRC}/.git" ]]; then
-  DIRTY=$(git -C "$DYAD_SANDBOX_PROJECT_SRC" status --porcelain 2>/dev/null) || true
-  if [[ -n "$DIRTY" ]]; then
-    echo "Warning: Source project has uncommitted changes that are NOT in the sandbox."
-  fi
 fi
 
 # --- Construct sandbox PATH ---
@@ -284,7 +260,7 @@ if [[ "$DRY_RUN" != "true" ]]; then
   # Extract diff against initial commit (captures all changes)
   ROOT_COMMIT=$(sudo -u $SANDBOX_USER env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null git -C "$PROJECT_DEST" rev-list --max-parents=0 HEAD 2>/dev/null) || true
   if [[ -n "$ROOT_COMMIT" ]]; then
-    sudo -u $SANDBOX_USER env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null git -C "$PROJECT_DEST" diff "${ROOT_COMMIT}..HEAD" > "$RESULTS_DIR/changes.diff" 2>/dev/null || true
+    sudo -u $SANDBOX_USER env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null git -C "$PROJECT_DEST" diff "${ROOT_COMMIT}" > "$RESULTS_DIR/changes.diff" 2>/dev/null || true
   fi
 
   # Copy audit log into same results directory
